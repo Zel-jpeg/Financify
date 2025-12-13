@@ -26,20 +26,32 @@ void main() async {
   final themeProvider = ThemeProvider();
   await themeProvider.initialize();
   
-  runApp(MyApp(themeProvider: themeProvider));
+  // Initialize auth provider to load guest mode state
+  final authProvider = AuthProvider();
+  await authProvider.initialize();
+  
+  runApp(MyApp(
+    themeProvider: themeProvider,
+    authProvider: authProvider,
+  ));
 }
 
 class MyApp extends StatelessWidget {
   final ThemeProvider themeProvider;
+  final AuthProvider authProvider;
   
-  const MyApp({super.key, required this.themeProvider});
+  const MyApp({
+    super.key,
+    required this.themeProvider,
+    required this.authProvider,
+  });
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: themeProvider),
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: authProvider),
         ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
         ChangeNotifierProxyProvider<ConnectivityProvider, TransactionProvider>(
           create: (_) => TransactionProvider(),

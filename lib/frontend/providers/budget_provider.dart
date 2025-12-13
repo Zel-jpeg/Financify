@@ -37,26 +37,42 @@ class BudgetProvider extends ChangeNotifier {
   Future<void> load() async {
     _loading = true;
     notifyListeners();
+    
+    debugPrint('[BudgetProvider] ========== LOADING BUDGETS ==========');
+    
     try {
+      // Get current user ID first
+      final userId = await _service.getCurrentUserId();
+      debugPrint('[BudgetProvider] Loading for user: $userId');
+      
+      if (userId == null) {
+        debugPrint('[BudgetProvider] No user ID - clearing data');
+        _items = [];
+        _loading = false;
+        notifyListeners();
+        return;
+      }
+      
       if (_connectivity?.isOffline != true) {
         try {
           // Sync pending operations first
           await _syncPending();
+          
           // Fetch from Supabase
           final raw = await _service.fetch('budget_allocations');
           final remoteItems = raw.map(BudgetModel.fromMap).toList();
+          debugPrint('[BudgetProvider] Fetched ${remoteItems.length} remote budgets');
+          
           // Load local items to merge
           final localItems = await _local.loadBudgets();
           
-          // Merge: Use remote data as base, but preserve local spent amounts for items that exist locally
-          // This ensures offline budget updates aren't lost
+          // Merge: preserve local spent amounts for items that exist locally
           final mergedItems = <BudgetModel>[];
           for (final remote in remoteItems) {
             final localMatch = localItems.firstWhere(
               (l) => l.id == remote.id,
               orElse: () => remote,
             );
-            // Use local spent amount if it's higher (offline updates) or if remote doesn't exist locally
             mergedItems.add(BudgetModel(
               id: remote.id,
               userId: remote.userId,
@@ -78,19 +94,30 @@ class BudgetProvider extends ChangeNotifier {
             }
           }
           
-          _items = mergedItems;
+          // Filter by current user ID
+          _items = mergedItems.where((b) => b.userId == userId).toList();
+          debugPrint('[BudgetProvider] ✓ Filtered to ${_items.length} budgets for user $userId');
+          
           await _local.cacheBudgets(_items);
-        } catch (_) {
+        } catch (e) {
+          debugPrint('[BudgetProvider] ✗ Error loading from Supabase: $e');
           // Fallback to local cache if Supabase fails
           _items = await _local.loadBudgets();
+          _items = _items.where((b) => b.userId == userId).toList();
+          debugPrint('[BudgetProvider] Loaded ${_items.length} budgets from local cache');
         }
       } else {
         _items = await _local.loadBudgets();
+        _items = _items.where((b) => b.userId == userId).toList();
+        debugPrint('[BudgetProvider] Offline: Loaded ${_items.length} budgets');
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[BudgetProvider] ✗✗✗ Error in load: $e');
       _items = [];
     }
+    
     _loading = false;
+    debugPrint('[BudgetProvider] ========== LOADING COMPLETE ==========');
     notifyListeners();
   }
 
@@ -98,8 +125,14 @@ class BudgetProvider extends ChangeNotifier {
     required String category,
     required double budgetAmount,
   }) async {
-    final uid = _service.currentUserId;
-    if (uid == null) return;
+    final uid = await _service.getCurrentUserId();
+    if (uid == null) {
+      debugPrint('[BudgetProvider] Cannot add budget - no user ID');
+      return;
+    }
+    
+    debugPrint('[BudgetProvider] Adding budget for user: $uid');
+    
     final now = DateTime.now();
     final item = BudgetModel(
       id: _uuid.v4(),
@@ -111,6 +144,7 @@ class BudgetProvider extends ChangeNotifier {
       year: now.year,
       createdAt: DateTime.now(),
     );
+    
     // Always save locally first
     _items = [..._items, item];
     await _local.cacheBudgets(_items);
@@ -120,8 +154,9 @@ class BudgetProvider extends ChangeNotifier {
     if (_connectivity?.isOffline != true) {
       try {
         await _service.insert('budget_allocations', item.toInsertMap());
-      } catch (_) {
-        // Queue for sync if Supabase fails
+        debugPrint('[BudgetProvider] ✓ Budget synced successfully');
+      } catch (e) {
+        debugPrint('[BudgetProvider] ✗ Failed to sync budget: $e');
         await _queue.enqueue(
           tableName: 'budget_allocations',
           recordId: item.id,
@@ -130,7 +165,6 @@ class BudgetProvider extends ChangeNotifier {
         );
       }
     } else {
-      // Queue for sync when back online
       await _queue.enqueue(
         tableName: 'budget_allocations',
         recordId: item.id,
@@ -143,6 +177,7 @@ class BudgetProvider extends ChangeNotifier {
   Future<void> updateSpent(String id, double spent) async {
     final idx = _items.indexWhere((b) => b.id == id);
     if (idx == -1) return;
+    
     final updated = BudgetModel(
       id: _items[idx].id,
       userId: _items[idx].userId,
@@ -162,7 +197,6 @@ class BudgetProvider extends ChangeNotifier {
       try {
         await _service.update('budget_allocations', id, {'spent_amount': spent});
       } catch (_) {
-        // Queue for sync if Supabase fails
         await _queue.enqueue(
           tableName: 'budget_allocations',
           recordId: id,
@@ -171,7 +205,6 @@ class BudgetProvider extends ChangeNotifier {
         );
       }
     } else {
-      // Queue for sync when back online
       await _queue.enqueue(
         tableName: 'budget_allocations',
         recordId: id,
@@ -196,6 +229,7 @@ class BudgetProvider extends ChangeNotifier {
     if (_connectivity?.isOffline == true) return;
     final pending = await _queue.pending();
     if (pending.isEmpty) return;
+    
     for (final row in pending) {
       final id = row['id'] as int;
       final op = row['operation'] as String;
@@ -211,10 +245,8 @@ class BudgetProvider extends ChangeNotifier {
         }
         await _queue.remove(id);
       } catch (_) {
-        // stop on first failure to avoid loop
         break;
       }
     }
   }
 }
-

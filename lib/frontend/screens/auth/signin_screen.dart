@@ -90,29 +90,13 @@ class SignInScreen extends StatelessWidget {
                                 SizedBox(
                                   width: double.infinity,
                                   height: 54,
-                                  child: ElevatedButton.icon(
+                                  child: ElevatedButton(
                                     onPressed: authProvider.isLoading
                                         ? null
                                         : () => _handleGoogleSignIn(
                                               context,
                                               authProvider,
                                             ),
-                                    icon: authProvider.isLoading
-                                        ? const SizedBox(
-                                            height: 20,
-                                            width: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Icon(Icons.g_mobiledata, size: 28),
-                                    label: Text(
-                                      authProvider.isLoading
-                                          ? 'Signing in...'
-                                          : 'Continue using Google',
-                                      style: const TextStyle(fontSize: 16),
-                                    ),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: Colors.white,
                                       foregroundColor: Colors.black87,
@@ -122,6 +106,48 @@ class SignInScreen extends StatelessWidget {
                                         borderRadius: BorderRadius.circular(14),
                                       ),
                                     ),
+                                    child: authProvider.isLoading
+                                        ? Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: const [
+                                              SizedBox(
+                                                height: 20,
+                                                width: 20,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.black87,
+                                                ),
+                                              ),
+                                              SizedBox(width: 12),
+                                              Text(
+                                                'Signing in...',
+                                                style: TextStyle(fontSize: 16),
+                                              ),
+                                            ],
+                                          )
+                                        : Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              // Google Logo Image
+                                              Image.asset(
+                                                'assets/images/icons/google-logo.png',
+                                                height: 24,
+                                                width: 24,
+                                                errorBuilder: (context, error, stackTrace) {
+                                                  // Fallback to icon if image not found
+                                                  return const Icon(
+                                                    Icons.g_mobiledata,
+                                                    size: 28,
+                                                  );
+                                                },
+                                              ),
+                                              const SizedBox(width: 12),
+                                              const Text(
+                                                'Continue using Google',
+                                                style: TextStyle(fontSize: 16),
+                                              ),
+                                            ],
+                                          ),
                                   ),
                                 ),
                                 const SizedBox(height: 14),
@@ -129,8 +155,9 @@ class SignInScreen extends StatelessWidget {
                                   width: double.infinity,
                                   height: 54,
                                   child: OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _handleGuestSignIn(context, authProvider),
+                                    onPressed: authProvider.isLoading
+                                        ? null
+                                        : () => _handleGuestSignIn(context, authProvider),
                                     icon: const Icon(Icons.person_outline),
                                     label: const Text(
                                       'Continue as guest',
@@ -200,15 +227,46 @@ class SignInScreen extends StatelessWidget {
     BuildContext context,
     AuthProvider authProvider,
   ) async {
+    debugPrint('[SignIn] Starting Google sign-in...');
+    
     final success = await authProvider.signInWithGoogle();
+    
     if (success && context.mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+      debugPrint('[SignIn] ✓ Google sign-in successful, refreshing data...');
+      
+      // Show loading indicator while refreshing data
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
       );
+      
+      // ✨ AUTO-REFRESH ALL DATA AFTER LOGIN ✨
+      await authProvider.refreshAllData(context);
+      
+      // Close loading dialog
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      debugPrint('[SignIn] ✓ Data refreshed, navigating to main screen...');
+      
+      // Navigate to main screen
+      if (context.mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+        );
+      }
     } else if (context.mounted) {
+      debugPrint('[SignIn] ✗ Google sign-in failed');
       final msg = authProvider.errorMessage ?? 'Sign in failed. Please try again.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg)),
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -217,10 +275,45 @@ class SignInScreen extends StatelessWidget {
     BuildContext context,
     AuthProvider authProvider,
   ) async {
+    debugPrint('[SignIn] Starting guest mode...');
+    
     final success = await authProvider.continueAsGuest();
+    
     if (success && context.mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+      debugPrint('[SignIn] ✓ Guest mode enabled, refreshing data...');
+      
+      // Show loading indicator while refreshing data
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+      
+      // ✨ AUTO-REFRESH ALL DATA FOR GUEST USER ✨
+      await authProvider.refreshAllData(context);
+      
+      // Close loading dialog
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      debugPrint('[SignIn] ✓ Data refreshed, navigating to main screen...');
+      
+      // Navigate to main screen
+      if (context.mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+        );
+      }
+    } else if (context.mounted) {
+      debugPrint('[SignIn] ✗ Guest mode failed');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to continue as guest. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }

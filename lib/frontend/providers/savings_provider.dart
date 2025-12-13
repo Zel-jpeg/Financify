@@ -27,24 +27,30 @@ class SavingsProvider extends ChangeNotifier {
     notifyListeners();
     
     debugPrint('[SavingsProvider] ========== LOADING SAVINGS GOALS ==========');
-    debugPrint('[SavingsProvider] Online: ${_connectivity?.isOffline != true}');
     
     try {
+      // Get current user ID first
+      final userId = await _service.getCurrentUserId();
+      debugPrint('[SavingsProvider] Loading for user: $userId');
+      
+      if (userId == null) {
+        debugPrint('[SavingsProvider] No user ID - clearing data');
+        _items = [];
+        _loading = false;
+        notifyListeners();
+        return;
+      }
+      
       if (_connectivity?.isOffline != true) {
         try {
           // STEP 1: Sync pending operations first
-          debugPrint('[SavingsProvider] Step 1: Syncing pending operations...');
+          debugPrint('[SavingsProvider] Syncing pending operations...');
           await syncPending();
           
           // STEP 2: Fetch from Supabase
-          debugPrint('[SavingsProvider] Step 2: Fetching from Supabase...');
+          debugPrint('[SavingsProvider] Fetching from Supabase...');
           final raw = await _service.fetch('savings_goals');
           debugPrint('[SavingsProvider] Supabase returned ${raw.length} raw records');
-          
-          // Debug: Print first record structure
-          if (raw.isNotEmpty) {
-            debugPrint('[SavingsProvider] Sample record structure: ${raw.first}');
-          }
           
           // STEP 3: Parse to models
           final remoteItems = <SavingsGoalModel>[];
@@ -55,43 +61,44 @@ class SavingsProvider extends ChangeNotifier {
               debugPrint('[SavingsProvider] ✓ Parsed: ${goal.title}');
             } catch (e) {
               debugPrint('[SavingsProvider] ✗ Failed to parse goal: $e');
-              debugPrint('[SavingsProvider] Problematic map: $map');
             }
           }
           debugPrint('[SavingsProvider] Successfully parsed ${remoteItems.length} goals');
           
-          // STEP 4: Cache with merge logic (preserves local modifications)
-          debugPrint('[SavingsProvider] Step 3: Caching goals...');
+          // STEP 4: Cache with merge logic
           await _local.cacheGoals(remoteItems);
           
           // STEP 5: Load from local
-          debugPrint('[SavingsProvider] Step 4: Loading from local cache...');
           _items = await _local.loadGoals();
           
-          debugPrint('[SavingsProvider] ✓ Final result: Loaded ${_items.length} goals');
-          for (final goal in _items) {
-            debugPrint('[SavingsProvider]   - ${goal.title}: ${goal.currentAmount}/${goal.targetAmount}');
-          }
+          // STEP 6: Filter by current user ID
+          _items = _items.where((g) => g.userId == userId).toList();
+          
+          debugPrint('[SavingsProvider] ✓ Final result: ${_items.length} goals for user $userId');
         } catch (e, stackTrace) {
           debugPrint('[SavingsProvider] ✗ Error loading from Supabase: $e');
           debugPrint('[SavingsProvider] Stack trace: $stackTrace');
-          // Fallback to local cache if Supabase fails
-          debugPrint('[SavingsProvider] Falling back to local cache...');
+          // Fallback to local cache
           _items = await _local.loadGoals();
+          _items = _items.where((g) => g.userId == userId).toList();
           debugPrint('[SavingsProvider] Loaded ${_items.length} goals from local cache');
         }
       } else {
         debugPrint('[SavingsProvider] Offline mode - loading from local only');
         _items = await _local.loadGoals();
-        debugPrint('[SavingsProvider] Offline: Loaded ${_items.length} goals from local');
+        _items = _items.where((g) => g.userId == userId).toList();
+        debugPrint('[SavingsProvider] Offline: Loaded ${_items.length} goals');
       }
     } catch (e, stackTrace) {
       debugPrint('[SavingsProvider] ✗✗✗ CRITICAL ERROR in load: $e');
       debugPrint('[SavingsProvider] Stack trace: $stackTrace');
-      // On error, try to load from local as fallback
       try {
         _items = await _local.loadGoals();
-        debugPrint('[SavingsProvider] Emergency fallback: Loaded ${_items.length} goals');
+        final userId = await _service.getCurrentUserId();
+        if (userId != null) {
+          _items = _items.where((g) => g.userId == userId).toList();
+        }
+        debugPrint('[SavingsProvider] Emergency fallback: ${_items.length} goals');
       } catch (e2) {
         debugPrint('[SavingsProvider] Even fallback failed: $e2');
         _items = [];
@@ -108,13 +115,13 @@ class SavingsProvider extends ChangeNotifier {
     required double targetAmount,
     String? description,
   }) async {
-    final uid = _service.currentUserId;
+    final uid = await _service.getCurrentUserId();
     if (uid == null) {
       debugPrint('[SavingsProvider] Cannot add goal - no user ID');
       return;
     }
     
-    debugPrint('[SavingsProvider] Adding new goal: $title');
+    debugPrint('[SavingsProvider] Adding new goal: $title for user: $uid');
     
     final goal = SavingsGoalModel(
       id: '',
@@ -127,7 +134,7 @@ class SavingsProvider extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     
-    // STEP 1: Always save locally first
+    // Always save locally first
     final id = await _local.saveGoal(goal);
     final savedGoal = SavingsGoalModel(
       id: id,
@@ -142,14 +149,13 @@ class SavingsProvider extends ChangeNotifier {
     _items.insert(0, savedGoal);
     notifyListeners();
     
-    // STEP 2: Try to sync to Supabase if online
+    // Try to sync to Supabase if online
     if (_connectivity?.isOffline != true) {
       try {
         await _service.insert('savings_goals', savedGoal.toInsertMap());
         debugPrint('[SavingsProvider] ✓ Goal synced successfully: $id');
       } catch (e) {
         debugPrint('[SavingsProvider] ✗ Failed to sync goal: $e');
-        // Queue for sync if Supabase fails
         await _syncQueue.enqueue(
           tableName: 'savings_goals',
           recordId: id,
@@ -158,7 +164,6 @@ class SavingsProvider extends ChangeNotifier {
         );
       }
     } else {
-      // STEP 3: Queue for sync when back online
       await _syncQueue.enqueue(
         tableName: 'savings_goals',
         recordId: id,
@@ -191,19 +196,16 @@ class SavingsProvider extends ChangeNotifier {
       createdAt: goal.createdAt,
     );
     
-    // STEP 1: Update locally first
     _items[idx] = updated;
     await _local.updateGoal(updated);
     notifyListeners();
     
-    // STEP 2: Try to sync to Supabase if online
     if (_connectivity?.isOffline != true) {
       try {
         await _service.update('savings_goals', id, {'current_amount': newAmount});
         debugPrint('[SavingsProvider] ✓ Contribution synced: $id');
       } catch (e) {
         debugPrint('[SavingsProvider] ✗ Failed to sync contribution: $e');
-        // Queue for sync if Supabase fails
         await _syncQueue.enqueue(
           tableName: 'savings_goals',
           recordId: id,
@@ -212,7 +214,6 @@ class SavingsProvider extends ChangeNotifier {
         );
       }
     } else {
-      // STEP 3: Queue for sync when back online
       await _syncQueue.enqueue(
         tableName: 'savings_goals',
         recordId: id,
@@ -225,13 +226,11 @@ class SavingsProvider extends ChangeNotifier {
 
   Future<void> syncPending() async {
     if (_connectivity?.isOffline == true) {
-      debugPrint('[SavingsProvider] Skipping sync - offline');
       return;
     }
     
     final pending = await _syncQueue.pending();
     if (pending.isEmpty) {
-      debugPrint('[SavingsProvider] No pending items to sync');
       return;
     }
     
@@ -262,13 +261,11 @@ class SavingsProvider extends ChangeNotifier {
         await _syncQueue.remove(item['id'] as int);
       } catch (e) {
         debugPrint('[SavingsProvider] ✗ Failed to sync item: $e');
-        // Keep in queue if sync fails and stop to avoid infinite loop
         break;
       }
     }
   }
   
-  // BONUS: Method to manually trigger sync
   Future<void> forceSyncNow() async {
     if (_connectivity?.isOffline == true) {
       debugPrint('[SavingsProvider] Cannot force sync - offline');

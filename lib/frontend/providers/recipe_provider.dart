@@ -126,7 +126,7 @@ class RecipeProvider extends ChangeNotifier {
     notifyListeners();
 
     final op = wasFavorite ? 'delete' : 'upsert';
-    final uid = _supabase.currentUserId;
+    final uid = await _supabase.getCurrentUserId();
     if (uid == null) return;
     final record = {
       'user_id': uid,

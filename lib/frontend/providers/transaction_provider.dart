@@ -33,35 +33,64 @@ class TransactionProvider extends ChangeNotifier {
   Future<void> load() async {
     _loading = true;
     notifyListeners();
+    
+    debugPrint('[TransactionProvider] ========== LOADING TRANSACTIONS ==========');
+    
     try {
+      // Get current user ID first
+      final userId = await _service.getCurrentUserId();
+      debugPrint('[TransactionProvider] Loading for user: $userId');
+      
+      if (userId == null) {
+        debugPrint('[TransactionProvider] No user ID - clearing data');
+        _items = [];
+        _loading = false;
+        notifyListeners();
+        return;
+      }
+      
       if (_connectivity?.isOffline != true) {
         try {
           // STEP 1: Sync pending operations first
+          debugPrint('[TransactionProvider] Syncing pending operations...');
           await syncPending();
           
-          // STEP 2: Fetch from Supabase
+          // STEP 2: Fetch from Supabase (returns empty for guest mode)
+          debugPrint('[TransactionProvider] Fetching from Supabase...');
           final raw = await _service.fetch('transactions');
           final remoteItems = raw.map(TransactionModel.fromMap).toList();
+          debugPrint('[TransactionProvider] Fetched ${remoteItems.length} remote transactions');
           
-          // STEP 3: Cache remote items (this now preserves unsynced items)
+          // STEP 3: Cache remote items (preserves unsynced items)
           await _local.cacheTransactions(remoteItems);
           
           // STEP 4: Load from local (includes both synced and unsynced)
           _items = await _local.loadTransactions();
+          debugPrint('[TransactionProvider] Loaded ${_items.length} total transactions from local');
+          
+          // STEP 5: Filter by current user ID
+          _items = _items.where((t) => t.userId == userId).toList();
+          debugPrint('[TransactionProvider] ✓ Filtered to ${_items.length} transactions for user $userId');
         } catch (e) {
-          debugPrint('[TransactionProvider] Error loading from Supabase: $e');
+          debugPrint('[TransactionProvider] ✗ Error loading from Supabase: $e');
           // Fallback to local if Supabase fails
           _items = await _local.loadTransactions();
+          _items = _items.where((t) => t.userId == userId).toList();
+          debugPrint('[TransactionProvider] Loaded ${_items.length} transactions from local cache');
         }
       } else {
-        // Offline mode: load from local
+        // Offline mode: load from local and filter by user
+        debugPrint('[TransactionProvider] Offline mode - loading from local only');
         _items = await _local.loadTransactions();
+        _items = _items.where((t) => t.userId == userId).toList();
+        debugPrint('[TransactionProvider] Loaded ${_items.length} transactions for user $userId');
       }
     } catch (e) {
-      debugPrint('[TransactionProvider] Error in load: $e');
+      debugPrint('[TransactionProvider] ✗✗✗ Error in load: $e');
       _items = [];
     } finally {
       _loading = false;
+      debugPrint('[TransactionProvider] ========== LOADING COMPLETE ==========');
       notifyListeners();
     }
   }
@@ -72,8 +101,13 @@ class TransactionProvider extends ChangeNotifier {
     required double amount,
     String? description,
   }) async {
-    final uid = _service.currentUserId;
-    if (uid == null) return;
+    final uid = await _service.getCurrentUserId();
+    if (uid == null) {
+      debugPrint('[TransactionProvider] Cannot add transaction - no user ID');
+      return;
+    }
+    
+    debugPrint('[TransactionProvider] Adding $type transaction for user: $uid');
     
     final tx = TransactionModel(
       id: '',
@@ -101,16 +135,14 @@ class TransactionProvider extends ChangeNotifier {
     _items.insert(0, savedTx);
     notifyListeners();
     
-    // STEP 3: Try to sync to Supabase if online
+    // STEP 3: Try to sync to Supabase if online (skipped for guest mode)
     if (_connectivity?.isOffline != true) {
       try {
         await _service.insert('transactions', savedTx.toInsertMap());
-        // Mark as synced only after successful insert
         await _local.markSynced(id);
-        debugPrint('[TransactionProvider] Transaction synced successfully: $id');
+        debugPrint('[TransactionProvider] ✓ Transaction synced successfully: $id');
       } catch (e) {
-        debugPrint('[TransactionProvider] Failed to sync transaction: $e');
-        // Queue for sync if Supabase fails
+        debugPrint('[TransactionProvider] ✗ Failed to sync transaction: $e');
         await _syncQueue.enqueue(
           tableName: 'transactions',
           recordId: id,
@@ -119,7 +151,6 @@ class TransactionProvider extends ChangeNotifier {
         );
       }
     } else {
-      // STEP 4: Queue for sync when back online
       await _syncQueue.enqueue(
         tableName: 'transactions',
         recordId: id,
@@ -138,7 +169,6 @@ class TransactionProvider extends ChangeNotifier {
     
     final pending = await _syncQueue.pending();
     if (pending.isEmpty) {
-      debugPrint('[TransactionProvider] No pending items to sync');
       return;
     }
     
@@ -157,21 +187,18 @@ class TransactionProvider extends ChangeNotifier {
           if (operation == 'insert') {
             await _service.insert('transactions', data);
             await _local.markSynced(recordId);
-            debugPrint('[TransactionProvider] Synced transaction: $recordId');
+            debugPrint('[TransactionProvider] ✓ Synced transaction: $recordId');
           }
         }
         
-        // Remove from queue after successful sync
         await _syncQueue.remove(item['id'] as int);
       } catch (e) {
-        debugPrint('[TransactionProvider] Failed to sync item: $e');
-        // Stop on first failure to maintain order
+        debugPrint('[TransactionProvider] ✗ Failed to sync item: $e');
         break;
       }
     }
   }
   
-  // BONUS: Method to manually trigger sync
   Future<void> forceSyncNow() async {
     if (_connectivity?.isOffline == true) {
       debugPrint('[TransactionProvider] Cannot force sync - offline');

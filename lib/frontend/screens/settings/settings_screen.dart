@@ -13,10 +13,15 @@ class SettingsScreen extends StatelessWidget {
     final auth = Provider.of<AuthProvider>(context);
     final theme = Provider.of<ThemeProvider>(context);
     final user = auth.currentUser;
+
     final name = user?.userMetadata?['name'] as String? ??
         user?.userMetadata?['full_name'] as String? ??
         'User';
+
     final email = user?.email ?? 'guest';
+
+    final avatarUrl = user?.userMetadata?['avatar_url'] as String? ??
+        user?.userMetadata?['picture'] as String?;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -32,8 +37,19 @@ class SettingsScreen extends StatelessWidget {
           _SettingsCard(
             child: ListTile(
               leading: CircleAvatar(
-                backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.12),
-                child: Icon(Icons.person, color: Theme.of(context).colorScheme.primary),
+                radius: 22,
+                backgroundColor: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withOpacity(0.12),
+                backgroundImage:
+                    avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                child: avatarUrl == null
+                    ? Icon(
+                        Icons.person,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
+                    : null,
               ),
               title: Text(name),
               subtitle: Text(email),
@@ -79,11 +95,16 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ) ??
                     false;
+
                 if (!confirmed) return;
+
                 await auth.signOut();
+
                 if (context.mounted) {
                   Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const SignInScreen()),
+                    MaterialPageRoute(
+                      builder: (_) => const SignInScreen(),
+                    ),
                     (route) => false,
                   );
                 }
@@ -98,6 +119,7 @@ class SettingsScreen extends StatelessWidget {
 
 class _SettingsCard extends StatelessWidget {
   final Widget child;
+
   const _SettingsCard({required this.child});
 
   @override
@@ -118,4 +140,3 @@ class _SettingsCard extends StatelessWidget {
     );
   }
 }
-

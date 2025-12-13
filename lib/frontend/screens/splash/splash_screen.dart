@@ -5,7 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../auth/signin_screen.dart';
 import '../home/main_navigation_screen.dart';
 import '../onboarding/onboarding_screen.dart';
-import '../../providers/auth_provider.dart';
+import '../../../data/datasources/local/guest_user_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -32,8 +32,8 @@ class _SplashScreenState extends State<SplashScreen> {
       final prefs = await SharedPreferences.getInstance();
       final seenOnboarding = prefs.getBool('seen_onboarding') ?? false;
 
-      final authProvider = AuthProvider();
-      final isGuest = await authProvider.isGuestMode();
+      // Use GuestUserService instead of AuthProvider
+      final isGuest = await GuestUserService.isGuestMode();
       final supaUser = Supabase.instance.client.auth.currentUser;
 
       debugPrint('[Splash] Onboarding seen: $seenOnboarding');
@@ -98,11 +98,9 @@ class _SplashScreenState extends State<SplashScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // Try to load logo, fallback to icon if it fails
         _buildLogo(),
         const SizedBox(height: 24),
         
-        // App Name (fallback if logo doesn't load)
         Text(
           'Financify',
           style: TextStyle(
@@ -113,7 +111,6 @@ class _SplashScreenState extends State<SplashScreen> {
         ),
         const SizedBox(height: 16),
         
-        // Loading Indicator
         CircularProgressIndicator(
           color: Theme.of(context).colorScheme.primary,
         ),
@@ -137,7 +134,6 @@ class _SplashScreenState extends State<SplashScreen> {
       width: 120,
       errorBuilder: (context, error, stackTrace) {
         debugPrint('[Splash] Error loading logo: $error');
-        // Fallback to icon if image fails to load
         return Container(
           height: 120,
           width: 120,

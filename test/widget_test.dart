@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'package:financify_v1/main.dart';
 import 'package:financify_v1/frontend/providers/theme_provider.dart';
+import 'package:financify_v1/frontend/providers/auth_provider.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
@@ -11,9 +12,16 @@ void main() {
     final themeProvider = ThemeProvider();
     // Note: We skip the initialize() call in tests as it might need actual storage
     
-    // Build our app and trigger a frame with the required themeProvider.
+    // Create auth provider for testing
+    final authProvider = AuthProvider();
+    // Note: We skip the initialize() call in tests as it might need actual storage
+    
+    // Build our app and trigger a frame with the required providers.
     await tester.pumpWidget(
-      MyApp(themeProvider: themeProvider),
+      MyApp(
+        themeProvider: themeProvider,
+        authProvider: authProvider,
+      ),
     );
 
     // Verify that our counter starts at 0.
