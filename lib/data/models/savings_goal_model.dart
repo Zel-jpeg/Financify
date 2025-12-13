@@ -20,6 +20,23 @@ class SavingsGoalModel {
   });
 
   factory SavingsGoalModel.fromMap(Map<String, dynamic> map) {
+    // Handle is_completed which can be bool (Supabase) or int (SQLite)
+    bool parseCompleted(dynamic value) {
+      if (value == null) return false;
+      if (value is bool) return value;
+      if (value is int) return value == 1;
+      if (value is String) return value.toLowerCase() == 'true' || value == '1';
+      return false;
+    }
+
+    // Handle created_at which might be timestamptz (Supabase) or string (SQLite)
+    DateTime parseCreatedAt(dynamic value) {
+      if (value == null) return DateTime.now();
+      if (value is String) return DateTime.parse(value);
+      if (value is DateTime) return value;
+      return DateTime.now();
+    }
+
     return SavingsGoalModel(
       id: map['id'] as String,
       userId: map['user_id'] as String,
@@ -27,8 +44,8 @@ class SavingsGoalModel {
       targetAmount: (map['target_amount'] as num).toDouble(),
       currentAmount: (map['current_amount'] as num).toDouble(),
       description: map['description'] as String?,
-      isCompleted: map['is_completed'] as bool? ?? false,
-      createdAt: DateTime.parse(map['created_at'] as String),
+      isCompleted: parseCompleted(map['is_completed']),
+      createdAt: parseCreatedAt(map['created_at']),
     );
   }
 
@@ -43,4 +60,3 @@ class SavingsGoalModel {
         'created_at': createdAt.toIso8601String(),
       };
 }
-

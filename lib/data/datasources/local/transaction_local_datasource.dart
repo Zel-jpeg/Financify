@@ -10,17 +10,26 @@ class TransactionLocalDatasource {
   Future<void> cacheTransactions(List<TransactionModel> txs) async {
     final db = await _db;
     final batch = db.batch();
-    // Get existing transactions to preserve is_synced status
-    final existingRows = await db.query('transactions', columns: ['id', 'is_synced']);
-    final existingSyncStatus = <String, int>{};
-    for (final row in existingRows) {
-      existingSyncStatus[row['id'] as String] = row['is_synced'] as int;
-    }
     
-    // Don't delete all - use upsert to preserve unsynced items
+    // CRITICAL FIX: Get all unsynced transactions BEFORE deleting
+    final unsyncedRows = await db.query(
+      'transactions',
+      where: 'is_synced = ?',
+      whereArgs: [0],
+    );
+    
+    // Convert unsynced rows to TransactionModel
+    final unsyncedTransactions = unsyncedRows.map((row) {
+      final map = Map<String, dynamic>.from(row);
+      map['created_at'] = map['date'] ?? map['created_at'];
+      return TransactionModel.fromMap(map);
+    }).toList();
+    
+    // Now it's safe to delete - we have unsynced items saved
+    batch.delete('transactions');
+    
+    // Insert all remote transactions (these are synced)
     for (final t in txs) {
-      // Preserve existing is_synced status, or mark as synced if new
-      final isSynced = existingSyncStatus[t.id] ?? 1;
       batch.insert('transactions', {
         'id': t.id,
         'user_id': t.userId,
@@ -29,11 +38,31 @@ class TransactionLocalDatasource {
         'category': t.category,
         'description': t.description,
         'date': t.createdAt.toIso8601String(),
-        'is_synced': isSynced, // Preserve existing status
+        'is_synced': 1, // Remote items are always synced
         'created_at': t.createdAt.toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      });
     }
+    
+    // Re-insert unsynced transactions that weren't in the remote data
+    for (final unsynced in unsyncedTransactions) {
+      // Only add if not already in remote data
+      if (!txs.any((t) => t.id == unsynced.id)) {
+        batch.insert('transactions', {
+          'id': unsynced.id,
+          'user_id': unsynced.userId,
+          'type': unsynced.type,
+          'amount': unsynced.amount,
+          'category': unsynced.category,
+          'description': unsynced.description,
+          'date': unsynced.createdAt.toIso8601String(),
+          'is_synced': 0, // Keep as unsynced
+          'created_at': unsynced.createdAt.toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      }
+    }
+    
     await batch.commit(noResult: true);
   }
 
@@ -69,5 +98,20 @@ class TransactionLocalDatasource {
     final db = await _db;
     await db.update('transactions', {'is_synced': 1}, where: 'id = ?', whereArgs: [id]);
   }
+  
+  // BONUS: Add this method to help with debugging
+  Future<List<TransactionModel>> getUnsyncedTransactions() async {
+    final db = await _db;
+    final rows = await db.query(
+      'transactions',
+      where: 'is_synced = ?',
+      whereArgs: [0],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map((row) {
+      final map = Map<String, dynamic>.from(row);
+      map['created_at'] = map['date'] ?? map['created_at'];
+      return TransactionModel.fromMap(map);
+    }).toList();
+  }
 }
-

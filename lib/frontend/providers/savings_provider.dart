@@ -25,65 +25,80 @@ class SavingsProvider extends ChangeNotifier {
   Future<void> load() async {
     _loading = true;
     notifyListeners();
+    
+    debugPrint('[SavingsProvider] ========== LOADING SAVINGS GOALS ==========');
+    debugPrint('[SavingsProvider] Online: ${_connectivity?.isOffline != true}');
+    
     try {
       if (_connectivity?.isOffline != true) {
         try {
-          // Sync pending operations first
+          // STEP 1: Sync pending operations first
+          debugPrint('[SavingsProvider] Step 1: Syncing pending operations...');
           await syncPending();
-          // Fetch from Supabase
-          final raw = await _service.fetch('savings_goals');
-          final remoteItems = raw.map(SavingsGoalModel.fromMap).toList();
-          // Load local items to merge
-          final localItems = await _local.loadGoals();
           
-          // Merge: Use remote data as base, but preserve local current amounts for items that exist locally
-          // This ensures offline contributions aren't lost
-          final mergedItems = <SavingsGoalModel>[];
-          for (final remote in remoteItems) {
-            final localMatch = localItems.firstWhere(
-              (l) => l.id == remote.id,
-              orElse: () => remote,
-            );
-            // Use local current amount if it's higher (offline contributions) or if remote doesn't exist locally
-            mergedItems.add(SavingsGoalModel(
-              id: remote.id,
-              userId: remote.userId,
-              title: remote.title,
-              targetAmount: remote.targetAmount,
-              currentAmount: localMatch.id == remote.id && localMatch.currentAmount > remote.currentAmount
-                  ? localMatch.currentAmount
-                  : remote.currentAmount,
-              description: remote.description,
-              isCompleted: remote.isCompleted,
-              createdAt: remote.createdAt,
-            ));
+          // STEP 2: Fetch from Supabase
+          debugPrint('[SavingsProvider] Step 2: Fetching from Supabase...');
+          final raw = await _service.fetch('savings_goals');
+          debugPrint('[SavingsProvider] Supabase returned ${raw.length} raw records');
+          
+          // Debug: Print first record structure
+          if (raw.isNotEmpty) {
+            debugPrint('[SavingsProvider] Sample record structure: ${raw.first}');
           }
           
-          // Add any local-only items (not yet synced)
-          for (final local in localItems) {
-            if (!mergedItems.any((r) => r.id == local.id)) {
-              mergedItems.add(local);
+          // STEP 3: Parse to models
+          final remoteItems = <SavingsGoalModel>[];
+          for (final map in raw) {
+            try {
+              final goal = SavingsGoalModel.fromMap(map);
+              remoteItems.add(goal);
+              debugPrint('[SavingsProvider] ✓ Parsed: ${goal.title}');
+            } catch (e) {
+              debugPrint('[SavingsProvider] ✗ Failed to parse goal: $e');
+              debugPrint('[SavingsProvider] Problematic map: $map');
             }
           }
+          debugPrint('[SavingsProvider] Successfully parsed ${remoteItems.length} goals');
           
-          _items = mergedItems;
-          await _local.cacheGoals(_items);
-        } catch (_) {
-          // Fallback to local cache if Supabase fails
+          // STEP 4: Cache with merge logic (preserves local modifications)
+          debugPrint('[SavingsProvider] Step 3: Caching goals...');
+          await _local.cacheGoals(remoteItems);
+          
+          // STEP 5: Load from local
+          debugPrint('[SavingsProvider] Step 4: Loading from local cache...');
           _items = await _local.loadGoals();
+          
+          debugPrint('[SavingsProvider] ✓ Final result: Loaded ${_items.length} goals');
+          for (final goal in _items) {
+            debugPrint('[SavingsProvider]   - ${goal.title}: ${goal.currentAmount}/${goal.targetAmount}');
+          }
+        } catch (e, stackTrace) {
+          debugPrint('[SavingsProvider] ✗ Error loading from Supabase: $e');
+          debugPrint('[SavingsProvider] Stack trace: $stackTrace');
+          // Fallback to local cache if Supabase fails
+          debugPrint('[SavingsProvider] Falling back to local cache...');
+          _items = await _local.loadGoals();
+          debugPrint('[SavingsProvider] Loaded ${_items.length} goals from local cache');
         }
       } else {
+        debugPrint('[SavingsProvider] Offline mode - loading from local only');
         _items = await _local.loadGoals();
+        debugPrint('[SavingsProvider] Offline: Loaded ${_items.length} goals from local');
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('[SavingsProvider] ✗✗✗ CRITICAL ERROR in load: $e');
+      debugPrint('[SavingsProvider] Stack trace: $stackTrace');
       // On error, try to load from local as fallback
       try {
         _items = await _local.loadGoals();
-      } catch (_) {
+        debugPrint('[SavingsProvider] Emergency fallback: Loaded ${_items.length} goals');
+      } catch (e2) {
+        debugPrint('[SavingsProvider] Even fallback failed: $e2');
         _items = [];
       }
     } finally {
       _loading = false;
+      debugPrint('[SavingsProvider] ========== LOADING COMPLETE ==========');
       notifyListeners();
     }
   }
@@ -94,7 +109,12 @@ class SavingsProvider extends ChangeNotifier {
     String? description,
   }) async {
     final uid = _service.currentUserId;
-    if (uid == null) return;
+    if (uid == null) {
+      debugPrint('[SavingsProvider] Cannot add goal - no user ID');
+      return;
+    }
+    
+    debugPrint('[SavingsProvider] Adding new goal: $title');
     
     final goal = SavingsGoalModel(
       id: '',
@@ -107,7 +127,7 @@ class SavingsProvider extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     
-    // Always save locally first
+    // STEP 1: Always save locally first
     final id = await _local.saveGoal(goal);
     final savedGoal = SavingsGoalModel(
       id: id,
@@ -122,11 +142,13 @@ class SavingsProvider extends ChangeNotifier {
     _items.insert(0, savedGoal);
     notifyListeners();
     
-    // Try to sync to Supabase if online
+    // STEP 2: Try to sync to Supabase if online
     if (_connectivity?.isOffline != true) {
       try {
         await _service.insert('savings_goals', savedGoal.toInsertMap());
-      } catch (_) {
+        debugPrint('[SavingsProvider] ✓ Goal synced successfully: $id');
+      } catch (e) {
+        debugPrint('[SavingsProvider] ✗ Failed to sync goal: $e');
         // Queue for sync if Supabase fails
         await _syncQueue.enqueue(
           tableName: 'savings_goals',
@@ -136,19 +158,25 @@ class SavingsProvider extends ChangeNotifier {
         );
       }
     } else {
-      // Queue for sync when back online
+      // STEP 3: Queue for sync when back online
       await _syncQueue.enqueue(
         tableName: 'savings_goals',
         recordId: id,
         operation: 'insert',
         data: savedGoal.toInsertMap(),
       );
+      debugPrint('[SavingsProvider] Goal queued for sync: $id');
     }
   }
 
   Future<void> addContribution(String id, double amount) async {
     final idx = _items.indexWhere((g) => g.id == id);
-    if (idx == -1) return;
+    if (idx == -1) {
+      debugPrint('[SavingsProvider] Cannot add contribution - goal not found: $id');
+      return;
+    }
+    
+    debugPrint('[SavingsProvider] Adding contribution: $amount to goal $id');
     
     final goal = _items[idx];
     final newAmount = goal.currentAmount + amount;
@@ -163,15 +191,18 @@ class SavingsProvider extends ChangeNotifier {
       createdAt: goal.createdAt,
     );
     
+    // STEP 1: Update locally first
     _items[idx] = updated;
     await _local.updateGoal(updated);
     notifyListeners();
     
-    // Try to sync to Supabase if online
+    // STEP 2: Try to sync to Supabase if online
     if (_connectivity?.isOffline != true) {
       try {
         await _service.update('savings_goals', id, {'current_amount': newAmount});
-      } catch (_) {
+        debugPrint('[SavingsProvider] ✓ Contribution synced: $id');
+      } catch (e) {
+        debugPrint('[SavingsProvider] ✗ Failed to sync contribution: $e');
         // Queue for sync if Supabase fails
         await _syncQueue.enqueue(
           tableName: 'savings_goals',
@@ -181,38 +212,69 @@ class SavingsProvider extends ChangeNotifier {
         );
       }
     } else {
-      // Queue for sync when back online
+      // STEP 3: Queue for sync when back online
       await _syncQueue.enqueue(
         tableName: 'savings_goals',
         recordId: id,
         operation: 'update',
         data: {'current_amount': newAmount},
       );
+      debugPrint('[SavingsProvider] Contribution queued for sync: $id');
     }
   }
 
   Future<void> syncPending() async {
-    if (_connectivity?.isOffline == true) return;
+    if (_connectivity?.isOffline == true) {
+      debugPrint('[SavingsProvider] Skipping sync - offline');
+      return;
+    }
+    
     final pending = await _syncQueue.pending();
+    if (pending.isEmpty) {
+      debugPrint('[SavingsProvider] No pending items to sync');
+      return;
+    }
+    
+    debugPrint('[SavingsProvider] Syncing ${pending.length} pending items');
+    
     for (final item in pending) {
       try {
         final tableName = item['table_name'] as String;
         final operation = item['operation'] as String;
+        final recordId = item['record_id'] as String;
         final data = Map<String, dynamic>.from(
           jsonDecode(item['data'] as String),
         );
-        if (tableName == 'savings_goals') {
-          if (operation == 'insert') {
-            await _service.insert('savings_goals', data);
-          } else if (operation == 'update') {
-            await _service.update('savings_goals', item['record_id'] as String, data);
-          }
+        
+        if (tableName != 'savings_goals') continue;
+        
+        if (operation == 'insert') {
+          await _service.insert('savings_goals', data);
+          debugPrint('[SavingsProvider] ✓ Synced goal: $recordId');
+        } else if (operation == 'update') {
+          await _service.update('savings_goals', recordId, data);
+          debugPrint('[SavingsProvider] ✓ Updated goal: $recordId');
+        } else if (operation == 'delete') {
+          await _service.delete('savings_goals', recordId);
+          debugPrint('[SavingsProvider] ✓ Deleted goal: $recordId');
         }
+        
         await _syncQueue.remove(item['id'] as int);
-      } catch (_) {
-        // Keep in queue if sync fails
+      } catch (e) {
+        debugPrint('[SavingsProvider] ✗ Failed to sync item: $e');
+        // Keep in queue if sync fails and stop to avoid infinite loop
+        break;
       }
     }
   }
+  
+  // BONUS: Method to manually trigger sync
+  Future<void> forceSyncNow() async {
+    if (_connectivity?.isOffline == true) {
+      debugPrint('[SavingsProvider] Cannot force sync - offline');
+      return;
+    }
+    await syncPending();
+    await load();
+  }
 }
-

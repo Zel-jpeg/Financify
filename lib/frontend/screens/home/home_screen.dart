@@ -905,13 +905,22 @@ class _HeaderCard extends StatelessWidget {
     final date = DateFormat('MMMM dd, yyyy').format(DateTime.now());
 
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFE7FFF4), Color(0xFFC9F0E1)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-        borderRadius: BorderRadius.only(
+      decoration: BoxDecoration(
+        gradient: Theme.of(context).brightness == Brightness.dark
+            ? LinearGradient(
+                colors: [
+                  const Color(0xFFE8F8EF).withOpacity(0.15),
+                  const Color(0xFFE8F8EF).withOpacity(0.1),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              )
+            : const LinearGradient(
+                colors: [Color(0xFFE7FFF4), Color(0xFFC9F0E1)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+        borderRadius: const BorderRadius.only(
           bottomLeft: Radius.circular(30),
           bottomRight: Radius.circular(30),
         ),
@@ -940,23 +949,23 @@ class _HeaderCard extends StatelessWidget {
                 children: [
                   Text(
                     'Hello, $userName',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F1E16),
+                            color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
                         Text(
                           date,
-                          style: const TextStyle(
-                            color: Color(0xFF6B7A6E),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                           ),
                         ),
                       ],
                     ),
                   ],
                 ),
-                Container(
+                /*Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(14),
@@ -966,13 +975,13 @@ class _HeaderCard extends StatelessWidget {
                         blurRadius: 10,
                         offset: const Offset(0, 6),
                       ),
-                ],
-              ),
-                  child: IconButton(
-                icon: const Icon(Icons.notifications_none),
-                onPressed: () {},
+                    ],
                   ),
-              )
+                    child: IconButton(
+                    icon: const Icon(Icons.notifications_none),
+                    onPressed: () {},
+                      ),
+                  )*/
             ],
           ),
           ),

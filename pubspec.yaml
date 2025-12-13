@@ -90,6 +90,7 @@ flutter:
   assets:
     - assets/images/onboarding/
     - assets/images/logo/
+    - assets/images/logo/logo-circle.png
     - assets/images/icons/
     - assets/images/placeholders/
 
