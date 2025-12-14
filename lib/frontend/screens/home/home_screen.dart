@@ -1322,6 +1322,8 @@ String _activityTitle(TransactionModel t) {
       : 'Paid ${t.category}';
 }
 
+// Replace the existing _BudgetCard class in home_screen.dart with this:
+
 class _BudgetCard extends StatelessWidget {
   final String category;
   final double spent;
@@ -1336,6 +1338,7 @@ class _BudgetCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = total == 0 ? 0.0 : (spent / total).clamp(0, 1);
+    final remaining = total - spent;
 
     final theme = Theme.of(context);
     return Container(
@@ -1362,30 +1365,107 @@ class _BudgetCard extends StatelessWidget {
             children: [
               Text(
                 category,
-                style: TextStyle(
+                style: const TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface,
+                  fontSize: 16,
                 ),
               ),
-              Text(
-                'Budget: ₱${total.toStringAsFixed(0)}',
-                style: TextStyle(
-                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: remaining >= 0 
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${(progress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    color: remaining >= 0 ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Expense: ₱${spent.toStringAsFixed(2)}',
-            style: TextStyle(color: theme.colorScheme.onSurface),
-          ),
           const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: progress.toDouble(),
-            minHeight: 8,
-            backgroundColor: Colors.grey.shade200,
-            color: AppColors.primary,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Budget',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${total.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Spent',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${spent.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Remaining',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${remaining.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: remaining >= 0 ? Colors.green : Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress.toDouble(),
+              minHeight: 10,
+              backgroundColor: Colors.grey.shade200,
+              color: progress > 0.9 
+                  ? Colors.red 
+                  : progress > 0.7 
+                      ? Colors.orange 
+                      : Colors.teal,
+            ),
           ),
         ],
       ),

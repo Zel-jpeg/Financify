@@ -56,9 +56,30 @@ class StatisticsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
-          const Text(
-            'Allocation Overview',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Budget Allocation',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+
+              // Legend under the title
+              Row(
+                children: [
+                  _LegendItem(
+                    color: Colors.blue.withOpacity(0.3),
+                    label: 'Budget (Washed Color)',
+                  ),
+                  const SizedBox(width: 12),
+                  _LegendItem(
+                    color: Colors.blue,
+                    label: 'Spent (Solid Color)',
+                  ),
+                ],
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           _AllocationDonut(budgets: budgets),
@@ -83,6 +104,38 @@ class StatisticsScreen extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String label;
+  
+  const _LegendItem({
+    required this.color,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
     );
   }
 }
@@ -132,35 +185,63 @@ class _AllocationDonut extends StatefulWidget {
 }
 
 class _AllocationDonutState extends State<_AllocationDonut>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _rotationController;
+  late AnimationController _scaleController;
   late Animation<double> _rotationAnimation;
+  late Animation<double> _scaleAnimation;
 
   @override
   void initState() {
     super.initState();
+    
+    // Rotation animation
     _rotationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1500),
     );
     _rotationAnimation = CurvedAnimation(
       parent: _rotationController,
       curve: Curves.easeOutCubic,
     );
+    
+    // Scale animation (pop in effect)
+    _scaleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _scaleAnimation = CurvedAnimation(
+      parent: _scaleController,
+      curve: Curves.elasticOut,
+    );
+    
+    _startAnimations();
+  }
+
+  void _startAnimations() {
+    _scaleController.forward();
     _rotationController.forward();
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Reset and restart rotation when navigating back
+  void didUpdateWidget(_AllocationDonut oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Restart animations when data changes
+    if (widget.budgets.items.length != oldWidget.budgets.items.length) {
+      _restartAnimations();
+    }
+  }
+
+  void _restartAnimations() {
+    _scaleController.reset();
     _rotationController.reset();
-    _rotationController.forward();
+    _startAnimations();
   }
 
   @override
   void dispose() {
     _rotationController.dispose();
+    _scaleController.dispose();
     super.dispose();
   }
 
@@ -170,63 +251,131 @@ class _AllocationDonutState extends State<_AllocationDonut>
       return _PlaceholderCircle();
     }
 
-    final totalSpent =
-        widget.budgets.items.fold<double>(0, (sum, b) => sum + b.spentAmount);
-    if (totalSpent == 0) {
+    final totalBudget = widget.budgets.items.fold<double>(
+      0, 
+      (sum, b) => sum + b.budgetAmount,
+    );
+    
+    if (totalBudget == 0) {
       return _PlaceholderCircle();
     }
 
-    final sections = widget.budgets.items.map((b) {
-      final value = (b.spentAmount / totalSpent) * 100;
-      return PieChartSectionData(
-        value: value,
-        color: Colors.primaries[
-            widget.budgets.items.indexOf(b) % Colors.primaries.length],
-        radius: 62,
-        title: '${value.toStringAsFixed(0)}%',
-        titleStyle: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-          fontSize: 12,
-        ),
-        badgeWidget: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 6,
-                offset: const Offset(0, 3),
-              ),
-            ],
+    // Create TWO separate pie charts:
+    // 1. Outer layer = Full budget (light color, larger radius)
+    // 2. Inner layer = Spent amount (solid color, smaller radius, fills up)
+    
+    final budgetSections = <PieChartSectionData>[];
+    final spentSections = <PieChartSectionData>[];
+
+    for (var i = 0; i < widget.budgets.items.length; i++) {
+      final budget = widget.budgets.items[i];
+      final percentage = (budget.budgetAmount / totalBudget) * 100;
+      final color = Colors.primaries[i % Colors.primaries.length];
+      
+      // Outer layer - Full budget allocation (light, washed color)
+      budgetSections.add(
+        PieChartSectionData(
+          value: percentage,
+          color: color.withOpacity(0.25),
+          radius: 80,
+          title: '',
+          borderSide: BorderSide(
+            color: color.withOpacity(0.4),
+            width: 1.5,
           ),
-          child: Text(
-            b.category,
-            style: TextStyle(
-              color: Colors.primaries[
-                  widget.budgets.items.indexOf(b) % Colors.primaries.length],
-              fontWeight: FontWeight.w600,
+        ),
+      );
+
+      // Inner layer - Spent amount (fills up based on spent/budget ratio)
+      // Calculate how much of THIS slice should be filled
+      final spentRatio = budget.budgetAmount > 0 
+          ? (budget.spentAmount / budget.budgetAmount).clamp(0.0, 1.0)
+          : 0.0;
+      
+      // The "filled" portion: percentage * spentRatio
+      final filledValue = percentage * spentRatio;
+      // The "empty" portion: percentage * (1 - spentRatio)
+      final emptyValue = percentage * (1 - spentRatio);
+      
+      // Add the FILLED part (solid color)
+      if (filledValue > 0) {
+        spentSections.add(
+          PieChartSectionData(
+            value: filledValue,
+            color: color,
+            radius: 60,
+            title: spentRatio > 0.15 ? '${(spentRatio * 100).toStringAsFixed(0)}%' : '',
+            titleStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
               fontSize: 11,
             ),
+            badgeWidget: spentRatio > 0.5 ? _buildBadge(context, budget, color) : null,
+            badgePositionPercentageOffset: 1.5,
           ),
-        ),
-        badgePositionPercentageOffset: 1.25,
-      );
-    }).toList();
+        );
+      }
+      
+      // Add the EMPTY part (transparent, to maintain spacing)
+      if (emptyValue > 0) {
+        spentSections.add(
+          PieChartSectionData(
+            value: emptyValue,
+            color: Colors.transparent,
+            radius: 60,
+            title: '',
+          ),
+        );
+      }
+      
+      // Add badge for budgets with low spending (shown on outer ring)
+      if (spentRatio <= 0.5) {
+        final midIndex = budgetSections.length - 1;
+        budgetSections[midIndex] = PieChartSectionData(
+          value: percentage,
+          color: color.withOpacity(0.25),
+          radius: 80,
+          title: '',
+          borderSide: BorderSide(
+            color: color.withOpacity(0.4),
+            width: 1.5,
+          ),
+          badgeWidget: _buildBadge(context, budget, color),
+          badgePositionPercentageOffset: 1.35,
+        );
+      }
+    }
 
     return AnimatedBuilder(
-      animation: _rotationAnimation,
+      animation: Listenable.merge([_rotationAnimation, _scaleAnimation]),
       builder: (context, child) {
-        return Transform.rotate(
-          angle: _rotationAnimation.value * 2 * 3.14159, // Full rotation
-          child: SizedBox(
-            height: 220,
-            child: PieChart(
-              PieChartData(
-                centerSpaceRadius: 60,
-                sections: sections,
+        return Transform.scale(
+          scale: _scaleAnimation.value,
+          child: Transform.rotate(
+            angle: _rotationAnimation.value * 2 * 3.14159,
+            child: SizedBox(
+              height: 280,
+              child: Stack(
+                children: [
+                  // Outer ring - Full budget (light/washed color)
+                  PieChart(
+                    PieChartData(
+                      centerSpaceRadius: 40,
+                      sections: budgetSections,
+                      sectionsSpace: 3,
+                      startDegreeOffset: 0,
+                    ),
+                  ),
+                  // Inner ring - Spent amount (solid color, fills progressively)
+                  PieChart(
+                    PieChartData(
+                      centerSpaceRadius: 40,
+                      sections: spentSections,
+                      sectionsSpace: 3,
+                      startDegreeOffset: 0,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -234,10 +383,79 @@ class _AllocationDonutState extends State<_AllocationDonut>
       },
     );
   }
+
+  Widget _buildBadge(BuildContext context, budget, Color color) {
+    // Calculate percentage of total budget
+    final totalBudget = widget.budgets.items.fold<double>(
+      0, 
+      (sum, b) => sum + b.budgetAmount,
+    );
+    final budgetPercentage = totalBudget > 0 
+        ? (budget.budgetAmount / totalBudget * 100).toStringAsFixed(0)
+        : '0';
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                budget.category,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '$budgetPercentage%',
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '₱${budget.spentAmount.toStringAsFixed(0)}/₱${budget.budgetAmount.toStringAsFixed(0)}',
+            style: TextStyle(
+              color: color.withOpacity(0.8),
+              fontWeight: FontWeight.w600,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PlaceholderCircle extends StatelessWidget {
-  @override
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -248,7 +466,7 @@ class _PlaceholderCircle extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
       ),
       child: Text(
-        'No budget data yet',
+        'No budget allocations yet',
         style: TextStyle(
           color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
         ),
@@ -271,6 +489,7 @@ class _BudgetTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = total == 0 ? 0.0 : (spent / total).clamp(0, 1);
+    final remaining = total - spent;
 
     final theme = Theme.of(context);
     return Container(
@@ -297,26 +516,110 @@ class _BudgetTile extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
-              Text(
-                'Budget: ₱${total.toStringAsFixed(0)}',
-                style: const TextStyle(color: Colors.grey),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: remaining >= 0 
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${(progress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    color: remaining >= 0 ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text('Expense: ₱${spent.toStringAsFixed(2)}'),
           const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: progress.toDouble(),
-            minHeight: 8,
-            backgroundColor: Colors.grey.shade200,
-            color: Colors.teal,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Budget',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${total.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Spent',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${spent.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Remaining',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '₱${remaining.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: remaining >= 0 ? Colors.green : Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress.toDouble(),
+              minHeight: 10,
+              backgroundColor: Colors.grey.shade200,
+              color: progress > 0.9 
+                  ? Colors.red 
+                  : progress > 0.7 
+                      ? Colors.orange 
+                      : Colors.teal,
+            ),
           ),
         ],
       ),
     );
   }
 }
-
