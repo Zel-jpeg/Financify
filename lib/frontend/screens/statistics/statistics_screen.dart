@@ -18,7 +18,7 @@ class StatisticsScreen extends StatelessWidget {
     final balance = totalIncome - totalExpense;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Statistics')),
+      appBar: AppBar(title: const Text('Analytics')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
